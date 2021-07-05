@@ -18,7 +18,7 @@ class Island {
 
     ctx!.font = "30px Lucida Console";
     ctx!.fillStyle = "white";
-    ctx!.fillText(Game.frameCounter.toString(), 500, 500);
+    ctx!.fillText(Game.frameCounter.toString(), 50, 50);
   }
 }
 
