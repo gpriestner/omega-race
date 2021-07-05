@@ -1,11 +1,6 @@
 "use strict";
-addEventListener("resize", resizeGameArea);
 const canvas = document.querySelector("canvas");
 const ctx = canvas.getContext("2d");
-function resizeGameArea() {
-    canvas.height = window.innerHeight - 5;
-    canvas.width = window.innerWidth - 1;
-}
 class Island {
     draw() {
         const height = canvas.height;
@@ -18,6 +13,13 @@ class Island {
     }
 }
 class Game {
+    static Game = (() => {
+        addEventListener("resize", Game.resize);
+    })();
+    static resize() {
+        canvas.height = window.innerHeight - 5;
+        canvas.width = window.innerWidth - 1;
+    }
     #previousTimestamp = 0;
     static frameCounter = 0;
     island = new Island();
