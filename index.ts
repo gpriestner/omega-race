@@ -186,6 +186,12 @@ class Island {
     const height = Game.Canvas.height;
     const width = Game.Canvas.width;
 
+    const top = Island.position.y + 8;
+    const left = Island.position.x + 8;
+    const bottom = top + Island.position.height - 8;
+    const right = left + Island.position.width - 8;
+
+    // draw outer rectangle
     Game.View.strokeStyle = "white";
     Game.View.strokeRect(
       Island.position.x,
@@ -196,26 +202,17 @@ class Island {
 
     const damage = game.ship.damage < 0 ? 0 : game.ship.damage;
     const shieldRatio = damage / game.ship.initDamage;
-    Game.View.strokeRect(
-      Island.position.x + 20,
-      Island.position.y + 50,
-      200,
-      20
-    );
-
     Game.View.fillStyle = "rgba(255, 255, 255, 1)";
-    Game.View.fillRect(
-      Island.position.x + 20,
-      Island.position.y + 50,
-      shieldRatio * 200,
-      20
-    );
+    Game.View.fillText("SHIELDS", left, top + 80);
+    Game.View.strokeRect(left + 140, top + 60, 200, 20);
+    Game.View.fillRect(left + 140, top + 60, shieldRatio * 200, 20);
 
     Game.View.font = "30px Lucida Console";
+    Game.View.fillText(`SCORE ${game.ship.score}`, left, top + 20);
     Game.View.fillText(
-      `SCORE ${game.ship.score}  SWARM ${Swarm.generation} (${game.swarm?.count})`,
-      width * 0.32,
-      height * 0.45
+      `SWARM ${Swarm.generation} (${game.swarm?.count})`,
+      left,
+      top + 50
     );
   }
   isInside(point: any): boolean {
