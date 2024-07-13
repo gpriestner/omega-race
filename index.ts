@@ -28,6 +28,9 @@ class Sound {
   static spinnerExplode = new Snippet("./sounds/spinner_explode.mp3", 2);
   static shipExplode = Snippet.audio("./sounds/ship_blast_2.mp3");
   static mineExplode = new Snippet("./sounds/mine_explode_4.mp3", 6);
+  static clusterBounce = new Snippet("./sounds/cluster_bounce.mp3", 2);
+  static clusterLaunch = new Snippet("./sounds/cluster_launch.mp3", 2);
+  static boltExplode = new Snippet("./sounds/smart_bolt_explode.mp3", 2);
 }
 const enum Button {
   Down = 0,
@@ -150,6 +153,9 @@ class GameInput {
   static get isFire(): boolean {
     return Keyboard.isPressed("Enter") || GamePad.isPressed(Button.Right);
   }
+  static get isClusterBomb(): boolean {
+    return Keyboard.isPressed("KeyC") || GamePad.isPressed(Button.Down);
+  }
   static get thrust(): number {
     if (Keyboard.isDown("ShiftRight")) return 1;
     else return GamePad.value(Button.RightTrigger);
@@ -159,6 +165,9 @@ class GameInput {
   }
   static get isPaused(): boolean {
     return Keyboard.isPressed("KeyP") || GamePad.isPressed(Button.Pause);
+  }
+  static get isRestart(): boolean {
+    return Keyboard.isPressed("KeyR") || GamePad.isPressed(Button.Restart);
   }
 }
 class Island {
@@ -186,10 +195,11 @@ class Island {
     const height = Game.Canvas.height;
     const width = Game.Canvas.width;
 
+    // provide padding inside border
     const top = Island.position.y + 8;
     const left = Island.position.x + 8;
-    const bottom = top + Island.position.height - 8;
-    const right = left + Island.position.width - 8;
+    // const bottom = top + Island.position.height - 8;
+    // const right = left + Island.position.width - 8;
 
     // draw outer rectangle
     Game.View.strokeStyle = "white";
@@ -200,6 +210,7 @@ class Island {
       Island.position.height
     );
 
+    // draw shields indicator
     const damage = game.ship.damage < 0 ? 0 : game.ship.damage;
     const shieldRatio = damage / game.ship.initDamage;
     Game.View.fillStyle = "rgba(255, 255, 255, 1)";
@@ -208,7 +219,11 @@ class Island {
     Game.View.fillRect(left + 140, top + 60, shieldRatio * 200, 20);
 
     Game.View.font = "30px Lucida Console";
-    Game.View.fillText(`SCORE ${game.ship.score}`, left, top + 20);
+    Game.View.fillText(
+      `SCORE ${game.ship.score}  SPEED ${game.ship.speed}`,
+      left,
+      top + 20
+    );
     Game.View.fillText(
       `SWARM ${Swarm.generation} (${game.swarm?.count})`,
       left,
@@ -221,6 +236,14 @@ class Island {
       point.x <= Island.position.right &&
       point.y >= Island.position.y &&
       point.y <= Island.position.bottom
+    );
+  }
+  static isIn(x: number, y: number): boolean {
+    return (
+      x >= Island.position.x &&
+      x <= Island.position.right &&
+      y >= Island.position.y &&
+      y <= Island.position.bottom
     );
   }
 }
@@ -246,7 +269,7 @@ class Ship {
     if (a != null) this.angle = a;
     const thrust = GameInput.thrust;
     for (let i = 0; i < thrust * 10; ++i)
-      game.exhaust.push(new Thrust(thrust * 5 + 5));
+      game.exhaust.push(new Exhaust(thrust * 5 + 5));
 
     if (counter == 1) {
       if (this.hyperCount > 0) this.hyperCount -= 1;
@@ -254,6 +277,23 @@ class Ship {
 
       if (GameInput.isFire && game.laserBolts.length < Game.maxLaserBolts)
         game.laserBolts.push(new LaserBolt());
+
+      if (GameInput.isClusterBomb) {
+        if (game.nuke === null) {
+          // const spd = 6 - Math.sqrt(this.dx ** 2 + this.dy ** 2);
+          const nukeAngle = this.angle + Math.PI;
+          game.nuke = new ClusterBomb(
+            this.x,
+            this.y,
+            nukeAngle,
+            this.dx,
+            this.dy
+          );
+          Sound.clusterLaunch.play();
+        } else {
+          game.nuke.ttl = 0;
+        }
+      }
 
       if (GameInput.isRotateLeft) this.angle -= 0.1;
       if (GameInput.isRotateRight) this.angle += 0.1;
@@ -349,11 +389,14 @@ class Ship {
     if (this.hyperCount == 0) {
       //const fillStyle = "rgba(255, 255, 255, 0.5)";
       //Game.View.fillStyle = fillStyle;
+
+      // draw centre of ship
       Game.View.beginPath();
-      Game.View.arc(this.x, this.y, this.radius / 3, 0, 2 * Math.PI);
-      Game.View.fill();
+      Game.View.arc(this.x, this.y, this.radius / 3.5, 0, 2 * Math.PI);
+      Game.View.stroke();
       //Game.View.fillStyle = "rgba(255, 255, 255, 1)";
 
+      // calc ship corner points
       const backLeftAngle = this.angle + (3 / 7.7) * (2 * Math.PI);
       const blx = this.radius * Math.cos(backLeftAngle);
       const bly = this.radius * Math.sin(backLeftAngle);
@@ -362,6 +405,7 @@ class Ship {
       const brx = this.radius * Math.cos(backRightAngle);
       const bry = this.radius * Math.sin(backRightAngle);
 
+      // draw ship corners
       Game.View.beginPath();
       // Game.View.moveTo(this.x, this.y);
       Game.View.moveTo(this.tip.x, this.tip.y);
@@ -431,7 +475,146 @@ class Ship {
     }
   }
 }
-class Thrust {
+class ClusterBomb {
+  x: number;
+  y: number;
+  isAlive = true;
+  radius = 10;
+  ttl = 2000;
+  speed = 10;
+  dx: number;
+  dy: number;
+  angle = 0;
+  safety = 150;
+  constructor(x: number, y: number, angle: number, dx: number, dy: number) {
+    this.x = x;
+    this.y = y;
+    this.dx = this.speed * Math.cos(angle) + dx;
+    this.dy = this.speed * Math.sin(angle) + dy;
+  }
+  update(progress: number, counter: number): void {
+    if (this.isAlive) {
+      this.safety -= 1;
+      if (--this.ttl < 1 && this.safety < 1) {
+        this.isAlive = false;
+        Game.Explode(this.x, this.y, 2048, 15, true);
+        game.nuke = null;
+      } else {
+        const left = this.x - this.radius;
+        const right = this.x + this.radius;
+        const top = this.y - this.radius;
+        const bottom = this.y + this.radius;
+
+        if (
+          left < 0 ||
+          right > Game.Canvas.width ||
+          Island.isIn(left, this.y) ||
+          Island.isIn(right, this.y)
+        ) {
+          this.dx = -this.dx;
+          Sound.clusterBounce.play();
+        }
+
+        if (
+          top < 0 ||
+          bottom > Game.Canvas.height ||
+          Island.isIn(this.x, top) ||
+          Island.isIn(this.x, bottom)
+        ) {
+          this.dy = -this.dy;
+          Sound.clusterBounce.play();
+        }
+
+        this.x += this.dx * progress;
+        this.y += this.dy * progress;
+
+        this.detect();
+      }
+    }
+  }
+  draw(): void {
+    if (this.isAlive) {
+      this.drawBomb();
+
+      // draw bomb
+      // this.angle += 0.1;
+      // var lineWidth = Game.View.lineWidth;
+      // Game.View.lineWidth = 14;
+      // Game.View.beginPath();
+      // Game.View.setLineDash([3, 5]);
+      // Game.View.arc(
+      //   this.x,
+      //   this.y,
+      //   this.radius * 0.5,
+      //   this.angle,
+      //   2 * Math.PI + this.angle
+      // );
+      // // Game.View.fill();
+      // Game.View.stroke();
+      // Game.View.setLineDash([]);
+      // Game.View.lineWidth = lineWidth;
+    }
+  }
+  a1 = 0;
+  a2 = 0;
+  drawBomb(): void {
+    const v = Game.View;
+
+    this.a1 += 0.05;
+    this.a2 -= 0.05;
+    const third = 2 * Math.PI * 0.333;
+    const a1a = this.a1 - third;
+    const a1b = this.a1 + third;
+    const a2a = this.a2 - third;
+    const a2b = this.a2 + third;
+
+    const x1 = this.x + this.radius * Math.cos(this.a1);
+    const y1 = this.y + this.radius * Math.sin(this.a1);
+    const x2 = this.x + this.radius * Math.cos(a1a);
+    const y2 = this.y + this.radius * Math.sin(a1a);
+    const x3 = this.x + this.radius * Math.cos(a1b);
+    const y3 = this.y + this.radius * Math.sin(a1b);
+
+    const x4 = this.x + (this.radius / 2) * Math.cos(this.a2);
+    const y4 = this.y + (this.radius / 2) * Math.sin(this.a2);
+    const x5 = this.x + (this.radius / 2) * Math.cos(a2a);
+    const y5 = this.y + (this.radius / 2) * Math.sin(a2a);
+    const x6 = this.x + (this.radius / 2) * Math.cos(a2b);
+    const y6 = this.y + (this.radius / 2) * Math.sin(a2b);
+
+    const r = this.radius * 0.2;
+    v.beginPath();
+    v.arc(x1, y1, r, 0, Math.PI * 2);
+    v.fill();
+    v.beginPath();
+    v.arc(x2, y2, r, 0, Math.PI * 2);
+    v.fill();
+    v.beginPath();
+    v.arc(x3, y3, r, 0, Math.PI * 2);
+    v.fill();
+    v.beginPath();
+    v.arc(x4, y4, r, 0, Math.PI * 2);
+    v.fill();
+    v.beginPath();
+    v.arc(x5, y5, r, 0, Math.PI * 2);
+    v.fill();
+    v.beginPath();
+    v.arc(x6, y6, r, 0, Math.PI * 2);
+    v.fill();
+  }
+  detect(): void {
+    if (this.isAlive) {
+      game.swarm?.drones.forEach((drone) => {
+        if (Game.isOverlapped(this, drone)) this.ttl = 0;
+      });
+
+      if (game.swarm?.spinner && Game.isOverlapped(this, game.swarm.spinner)) {
+        this.ttl = 0;
+      }
+    }
+  }
+}
+class Exhaust {
   x: number;
   y: number;
   dx: number;
@@ -468,17 +651,23 @@ class Debris {
   y: number;
   dx: number;
   dy: number;
-  ttl: number = 10;
+  ttl: number;
+  isDestructive: boolean;
   size: number;
   static sizeCounter: number = 0;
-  constructor(x: number, y: number) {
+  constructor(x: number, y: number, ttl = 10, isDestructive = false) {
     this.x = x;
     this.y = y;
+    this.ttl = ttl;
+    this.isDestructive = isDestructive;
     const angle = Math.random() * 2 * Math.PI;
     const speed = Math.random() * 20;
     this.dx = speed * Math.cos(angle);
     this.dy = speed * Math.sin(angle);
     this.size = ++Debris.sizeCounter % 3;
+  }
+  get radius() {
+    return this.size + 1;
   }
   update(progress: number): void {
     if (this.ttl > 0) {
@@ -498,21 +687,30 @@ class Debris {
     }
   }
   detect(): void {
-    // game.swarm?.drones.forEach((drone) => {
-    //   if (Game.isCollision(this, drone)) {
-    //     drone.damage -= this.ttl;
-    //     this.ttl = 0;
-    //     if (drone.damage < 0) {
-    //       drone.isAlive = false;
-    //       Sound.droneExplode.play();
-    //       // for (let i = 0; i < 32; ++i)
-    //       //   game.debris.push(new Debris(drone.x, drone.y));
-    //       Game.Explode(this.x, this.y, 32);
-    //     } else {
-    //       Sound.droneHit.play();
-    //     }
-    //   }
-    // });
+    if (this.isDestructive) {
+      if (game.ship.hyperCount == 0 && Game.isCollision(this, game.ship)) {
+        game.ship.hit(this.ttl);
+        this.ttl = 0;
+      }
+      game.swarm?.drones.forEach((drone) => {
+        if (this.ttl > 0 && Game.isCollision(this, drone)) {
+          drone.hit(this.ttl);
+          this.ttl = 0;
+        }
+      });
+
+      if (
+        game?.swarm?.spinner != null &&
+        Game.isCollision(this, game.swarm.spinner)
+      ) {
+        game.ship.score += 150;
+        game.swarm.spinner.hit();
+      }
+
+      game.mines.forEach((m) => {
+        if (m.isCollision(this)) this.ttl = 0;
+      });
+    }
   }
 }
 class LaserBolt {
@@ -572,9 +770,18 @@ class LaserBolt {
       if (mine.isCollision(this)) {
         this.ttl = 0;
         game.ship.addHealth(10);
-        break;
+        // break;
       }
     }
+
+    game.droneBolts.forEach((db) => {
+      if (Game.isOverlapped(this, db)) {
+        this.ttl = 0;
+        db.ttl = 0;
+        Game.Explode(this.x, this.y, 32);
+        Sound.boltExplode.play();
+      }
+    });
   }
 }
 class Mine {
@@ -583,7 +790,7 @@ class Mine {
   constructor(private x: number, private y: number, private radius: number) {}
   update(progress: number, counter: number) {
     if (this.isAlive && game.ship.isAlive) {
-      if (counter == 1 && this.speed < 1) this.speed += 0.001;
+      if (counter == 1 && this.speed < 2) this.speed += 0.001;
       const tx = game.ship.x - this.x;
       const ty = game.ship.y - this.y;
       const angle = Math.atan2(ty, tx);
@@ -619,8 +826,11 @@ class Mine {
     ) {
       game.ship.hit(100);
     }
+    if (game?.nuke?.isAlive && this.isCollision(game.nuke)) {
+      game.nuke.ttl = 0;
+    }
   }
-  isCollision(other: Ship | LaserBolt): boolean {
+  isCollision(other: Ship | LaserBolt | Debris | ClusterBomb): boolean {
     if (!this.isAlive) return false;
     const collide =
       (this.x - other.x) ** 2 + (this.y - other.y) ** 2 <=
@@ -640,13 +850,22 @@ class DroneBolt {
   dy: number;
   //radius: number;
   ttl: number = 50;
-  constructor(x: number, y: number, angle: number) {
+  isSmart = false;
+  speed = 12;
+  radius = 1;
+  constructor(x: number, y: number, angle: number, isSmart = false) {
     this.x = x;
     this.y = y;
+    this.isSmart = isSmart;
+    if (isSmart) {
+      this.speed = 4;
+      this.ttl = 300;
+      this.radius = 3;
+    }
     //this.radius = game.ship.radius / 8;
-    const speed = 12;
-    this.dx = speed * Math.cos(angle);
-    this.dy = speed * Math.sin(angle);
+    // const speed = 12;
+    this.dx = this.speed * Math.cos(angle);
+    this.dy = this.speed * Math.sin(angle);
 
     // this.x += this.dx;
     // this.y += this.dy;
@@ -654,6 +873,16 @@ class DroneBolt {
   update(progress: number): void {
     if (this.ttl > 0) {
       this.ttl -= progress;
+
+      if (this.isSmart) {
+        const tx = game.ship.x - this.x;
+        const ty = game.ship.y - this.y;
+        const angle = Math.atan2(ty, tx);
+
+        this.dx = this.speed * Math.cos(angle);
+        this.dy = this.speed * Math.sin(angle);
+      }
+
       this.x += this.dx * progress;
       this.y += this.dy * progress;
 
@@ -664,47 +893,25 @@ class DroneBolt {
     if (this.ttl > 0) {
       const fillStyle = `rgba(255, 255, 255, ${this.ttl / 25})`;
       Game.View.fillStyle = fillStyle;
-      Game.View.fillRect(this.x, this.y, 3, 3);
+      if (this.isSmart) Game.View.fillRect(this.x, this.y, 7, 7);
+      else Game.View.fillRect(this.x, this.y, 3, 3);
     }
   }
   detect(): void {
     if (game.ship.hyperCount == 0 && Game.isCollision(this, game.ship)) {
       game.ship.hit(this.ttl);
-      // //game.ship.isAlive = false;
-      // game.ship.shield = 6;
-      // game.ship.damage -= this.ttl;
       this.ttl = 0;
-      // if (game.ship.damage <= 0) game.ship.isAlive = false;
-      // if (game.ship.isAlive) {
-      //   Sound.shipHit.play();
-      // } else {
-      //   Sound.shipExplode.play();
-      //   for (let i = 0; i < 256; ++i)
-      //     game.debris.push(new Debris(game.ship.x, game.ship.y));
-      // }
-      //Sound.droneExplode.play();
     }
-    // game.drones.forEach((drone) => {
-    //   if (Game.isCollision(this, drone)) {
-    //     drone.damage -= this.ttl;
-    //     this.ttl = 0;
-    //     if (drone.damage < 0) {
-    //       drone.isAlive = false;
-    //       Sound.droneExplode.play();
-    //       for (let i = 0; i < 32; ++i)
-    //         game.debris.push(new Debris(drone.x, drone.y));
-    //     } else {
-    //       Sound.droneHit.play();
-    //     }
-    //   }
-    // });
+    if (game.nuke?.isAlive && Game.isCollision(this, game.nuke)) {
+      game.nuke.ttl = 0;
+    }
   }
 }
 class Drone {
   x: number;
   y: number;
   radius: number;
-  maxRaduis = 10;
+  maxRaduis = 14;
   angle: number = Math.random() * 2 * Math.PI;
   speed: number = 2;
   mode: number = 0;
@@ -715,7 +922,7 @@ class Drone {
   left: number;
   isAlive: boolean = true;
   damage: number = 100;
-  opacity = 0;
+  // opacity = 0;
 
   constructor(x: number, y: number) {
     this.x = x;
@@ -768,57 +975,15 @@ class Drone {
   }
   draw(): void {
     if (this.isAlive) {
-      // this.drawDrone();
       this.drawDrone();
     }
   }
-  drawSpinner(): void {
-    Game.View.beginPath();
-    Game.View.arc(
-      this.x,
-      this.y,
-      this.radius * 0.7,
-      this.angle,
-      this.angle + 2 * Math.PI
-    );
-    Game.View.fill();
-
-    const w = Game.View.lineWidth;
-    Game.View.lineWidth - 5;
-
-    const third = 2 * Math.PI * 0.333;
-    const a1 = this.angle;
-    const a2 = this.angle + third; // a1 + third;
-    const a3 = a2 + third; // a2 + third;
-
-    const r = this.radius + 4;
-    const x1 = this.x + r * Math.cos(a1);
-    const y1 = this.y + r * Math.sin(a1);
-    const x2 = this.x + r * Math.cos(a2);
-    const y2 = this.y + r * Math.sin(a2);
-    const x3 = this.x + r * Math.cos(a3);
-    const y3 = this.y + r * Math.sin(a3);
-
-    const v = Game.View;
-    v.beginPath();
-    v.lineWidth = 5;
-
-    v.moveTo(this.x, this.y);
-    v.lineTo(x1, y1);
-    v.moveTo(this.x, this.y);
-    v.lineTo(x2, y2);
-    v.moveTo(this.x, this.y);
-    v.lineTo(x3, y3);
-    v.stroke();
-
-    v.lineWidth = w;
-  }
   drawDrone(): void {
-    if (this.opacity < 1) {
-      this.opacity += 0.003;
-      if (this.opacity > 1) this.opacity = 1;
-    }
-    const style = `rgba(255, 255, 255, ${this.opacity})`;
+    // if (this.opacity < 1) {
+    //   this.opacity += 0.003;
+    //   if (this.opacity > 1) this.opacity = 1;
+    // }
+    // const style = `rgba(255, 255, 255, ${this.opacity})`;
     // Game.View.fillStyle = style;
     // Game.View.strokeStyle = style;
 
@@ -828,14 +993,13 @@ class Drone {
     Game.View.arc(
       this.x,
       this.y,
-      this.radius * 1.6,
+      this.radius, // * 1.6,
       this.angle,
       this.angle + 2 * Math.PI
     );
     Game.View.stroke();
 
-    // draw radial lines
-    // Game.View.lineTo(this.x, this.y);
+    // calc radial lines
     Game.View.beginPath();
     const w = Game.View.lineWidth;
     Game.View.lineWidth = 5;
@@ -846,7 +1010,7 @@ class Drone {
     const a3 = a2 + quarter;
     const a4 = a3 + quarter;
 
-    const r = this.radius + 4;
+    const r = this.radius; // + 4;
     const x1 = this.x + r * Math.cos(a1);
     const y1 = this.y + r * Math.sin(a1);
     const x2 = this.x + r * Math.cos(a2);
@@ -857,25 +1021,23 @@ class Drone {
     const y4 = this.y + r * Math.sin(a4);
 
     //Game.View.fillStyle = style;
+    // draw radial lines
     Game.View.moveTo(x1, y1);
     Game.View.lineTo(x3, y3);
     Game.View.moveTo(x2, y2);
     Game.View.lineTo(x4, y4);
-
     Game.View.stroke();
 
     Game.View.lineWidth = w;
+    // draw inner filled circle (fainter if damaged)
     if (this.damage > 0) {
-      // draw inner filled circle (fainter if damaged)
       Game.View.beginPath();
       const fillStyle = `rgba(255, 255, 255, ${this.damage / 100})`;
-      //if (this.opacity < 1) Game.View.fillStyle = style;
-      //else
       Game.View.fillStyle = fillStyle;
       Game.View.arc(
         this.x,
         this.y,
-        this.radius + 1,
+        this.radius * 0.7,
         this.angle,
         this.angle + 2 * Math.PI
       );
@@ -892,9 +1054,13 @@ class Drone {
       Sound.droneShoot.play();
     }
   }
-  promote(): Spinner {
-    this.isAlive = false;
-    return new Spinner(this.x, this.y, this.radius);
+  promote(): Spinner | null {
+    if (this.isAlive) {
+      this.isAlive = false;
+      return new Spinner(this.x, this.y, this.radius);
+    } else {
+      return null;
+    }
   }
   hit(damage: number): void {
     this.damage -= damage;
@@ -926,9 +1092,9 @@ class Spinner {
     this.radius = radius;
     const speed = 10;
     if (Math.random() > 0.5) this.dx = speed;
-    else this.dx = -10;
+    else this.dx = -speed;
     if (Math.random() > 0.5) this.dy = speed;
-    else this.dy = -10;
+    else this.dy = -speed;
 
     if (Math.random() > 0.5) this.speed = -this.speed;
   }
@@ -946,45 +1112,28 @@ class Spinner {
           game.mines.push(new Mine(this.x, this.y, 7));
       }
 
-      // calculate coords at extreme edge of arena
-      const minX = this.radius + 2;
-      const minY = this.radius + 2;
-      const maxX = Game.Canvas.width - this.radius - 6;
-      const maxY = Game.Canvas.height - this.radius - 6;
+      const left = this.x - this.radius;
+      const right = this.x + this.radius;
+      const top = this.y - this.radius;
+      const bottom = this.y + this.radius;
 
-      if (this.x < minX || this.x > maxX) {
-        this.dx = -this.dx;
-        Sound.spinnerBounce.play();
-      }
-      if (this.y < minY || this.y > maxY) {
-        this.dy = -this.dy;
-        Sound.spinnerBounce.play();
-      }
       if (
-        this.x > Island.position.x &&
-        this.x < Island.position.right &&
-        ((this.dy > 0 &&
-          this.y + this.radius >= Island.position.y &&
-          !(this.y + this.radius >= Island.position.bottom)) ||
-          (this.dy < 0 &&
-            this.y - this.radius <= Island.position.bottom &&
-            !(this.y + this.radius <= Island.position.y)))
+        left < 0 ||
+        right > Game.Canvas.width ||
+        Island.isIn(left, this.y) ||
+        Island.isIn(right, this.y)
       ) {
-        this.dy = -this.dy;
+        this.dx = -this.dx;
         Sound.spinnerBounce.play();
       }
 
       if (
-        this.y > Island.position.y &&
-        this.y < Island.position.bottom &&
-        ((this.dx > 0 &&
-          this.x + this.radius >= Island.position.x &&
-          !(this.x + this.radius >= Island.position.right)) ||
-          (this.dx < 0 &&
-            this.x - this.radius <= Island.position.right &&
-            !(this.x + this.radius <= Island.position.x)))
+        top < 0 ||
+        bottom > Game.Canvas.height ||
+        Island.isIn(this.x, top) ||
+        Island.isIn(this.x, bottom)
       ) {
-        this.dx = -this.dx;
+        this.dy = -this.dy;
         Sound.spinnerBounce.play();
       }
 
@@ -994,26 +1143,16 @@ class Spinner {
   }
   draw(): void {
     if (this.isAlive) {
-      Game.View.beginPath();
-      Game.View.arc(
-        this.x,
-        this.y,
-        this.radius * 0.7,
-        this.angle,
-        this.angle + 2 * Math.PI
-      );
-      Game.View.fill();
+      const v = Game.View;
+      const w = v.lineWidth;
 
-      const w = Game.View.lineWidth;
-
-      Game.View.lineWidth - 5;
-
+      //calc radial lines
       const third = 2 * Math.PI * 0.333;
       const a1 = this.angle;
       const a2 = this.angle + third; // a1 + third;
       const a3 = a2 + third; // a2 + third;
 
-      const r = this.radius + 4;
+      const r = this.radius;
       const x1 = this.x + r * Math.cos(a1);
       const y1 = this.y + r * Math.sin(a1);
       const x2 = this.x + r * Math.cos(a2);
@@ -1021,16 +1160,42 @@ class Spinner {
       const x3 = this.x + r * Math.cos(a3);
       const y3 = this.y + r * Math.sin(a3);
 
-      const v = Game.View;
+      // draw radial lines
       v.beginPath();
       v.lineWidth = 5;
-
       v.moveTo(this.x, this.y);
       v.lineTo(x1, y1);
       v.moveTo(this.x, this.y);
       v.lineTo(x2, y2);
       v.moveTo(this.x, this.y);
       v.lineTo(x3, y3);
+      v.stroke();
+
+      // fill inner circle
+      var originalFillStyle = v.fillStyle;
+      v.fillStyle = "black";
+      v.beginPath();
+      v.arc(
+        this.x,
+        this.y,
+        this.radius * 0.6,
+        this.angle,
+        this.angle + 2 * Math.PI
+      );
+      v.fill();
+      v.fillStyle = originalFillStyle;
+
+      // draw outer circle
+      v.lineWidth = 4;
+      v.beginPath();
+      v.arc(
+        this.x,
+        this.y,
+        this.radius * 0.3,
+        this.angle,
+        this.angle + 2 * Math.PI
+      );
+      // v.fill();
       v.stroke();
 
       v.lineWidth = w;
@@ -1067,7 +1232,7 @@ class Spinner {
       const tx = game.ship.x - this.x;
       const ty = game.ship.y - this.y;
       const angle = Math.atan2(ty, tx);
-      const bolt = new DroneBolt(this.x, this.y, angle);
+      const bolt = new DroneBolt(this.x, this.y, angle, true);
       game.droneBolts.push(bolt);
       Sound.droneShoot.play();
     }
@@ -1078,7 +1243,7 @@ class Swarm {
   gapCounter = 500;
   size: number;
   drones: Drone[] = [];
-  spinner: Spinner | null = null;
+  spinner: Spinner | null | undefined = null;
   counter: number = 1;
   constructor() {
     this.size = ++Swarm.generation * 4;
@@ -1162,16 +1327,17 @@ class Game {
   debris: Debris[] = [];
   droneBolts: DroneBolt[] = [];
   swarm: Swarm | null = null;
+  nuke: ClusterBomb | null = null;
   mines: Mine[] = [];
-  exhaust: Thrust[] = [];
+  exhaust: Exhaust[] = [];
 
   constructor() {
-    Swarm.generation = 0;
+    // Swarm.generation = 0;
   }
 
   static resize(): void {
-    Game.Canvas.height = window.innerHeight - 5;
-    Game.Canvas.width = window.innerWidth - 1;
+    Game.Canvas.height = window.innerHeight; // - 5
+    Game.Canvas.width = window.innerWidth; // - 1
     Island.calculatePosition();
   }
 
@@ -1183,9 +1349,10 @@ class Game {
     return Game.Canvas.width;
   }
 
+  // is the bolt inside the radius of the drone?
   static isCollision(
-    bolt: LaserBolt | Debris | DroneBolt,
-    drone: Drone | Spinner | Ship
+    bolt: LaserBolt | Debris | DroneBolt | ClusterBomb,
+    drone: Drone | Spinner | Ship | ClusterBomb
   ): boolean {
     if (bolt.ttl < 1 || !drone.isAlive) return false;
     else {
@@ -1194,9 +1361,26 @@ class Game {
       return dx < drone.radius - 1 && dy < drone.radius - 1;
     }
   }
+  static isOverlapped(
+    first: ClusterBomb | LaserBolt,
+    second: Drone | Spinner | DroneBolt
+  ): boolean {
+    const actDistanceSquared =
+      (first.x - second.x) ** 2 + (first.y - second.y) ** 2;
+    const minDistanceSquared = (first.radius + second.radius) ** 2;
+    const collide = actDistanceSquared <= minDistanceSquared;
+    return collide;
+  }
 
-  static Explode(x: number, y: number, fragments: number) {
-    for (let i = 0; i < fragments; ++i) game.debris.push(new Debris(x, y));
+  static Explode(
+    x: number,
+    y: number,
+    fragments: number,
+    ttl = 10,
+    isDestructive = false
+  ) {
+    for (let i = 0; i < fragments; ++i)
+      game.debris.push(new Debris(x, y, ttl, isDestructive));
   }
 
   static readonly maxLaserBolts = 10;
@@ -1230,6 +1414,8 @@ class Game {
 
       this.exhaust.forEach((ex) => ex.update(progress));
 
+      this.nuke?.update(progress, counter);
+
       counter += 1;
     }
 
@@ -1249,9 +1435,15 @@ class Game {
     this.droneBolts.forEach((bolt) => bolt.draw());
     this.mines.forEach((mine) => mine.draw());
     this.exhaust.forEach((ex) => ex.draw());
+    this.nuke?.draw();
   }
 
   step(timestamp: number): void {
+    if (GameInput.isRestart) {
+      Game.isPaused = false;
+      game = new Game();
+      game.start();
+    }
     if (Game.isPaused) {
       // check for resume
       GamePad.update();
@@ -1284,6 +1476,7 @@ class Game {
     Sound.pulsate.volume = 0.1;
     Sound.pulsate.play();
 
+    Swarm.generation = 0;
     this.swarm = new Swarm();
 
     requestAnimationFrame(Game.animate);
